@@ -45,7 +45,7 @@ pub fn parse_file(reader: &mut BufReader<File>) -> Result<(), Error> {
                 });
                 if let Some(instruction) = splitted_instruction.next() {
                     match instruction {
-                        "label" | "if-goto" => {
+                        "label" | "if-goto" | "goto" => {
                             if splitted_instruction.next().is_none() {
                                 return Err(Error::WrongSyntax {
                                     expected: { format!("{} <destination>", instruction) },

@@ -36,7 +36,7 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn set_label(&mut self, label: &str) -> &mut Self {
+    fn write_label(&mut self, label: &str) -> &mut Self {
         let _ = writeln!(self.hack_instruction, "({})", label);
         self
     }
@@ -183,7 +183,7 @@ impl<'a> Writer<'a> {
             .load_address_register("SP")
             .decrement_address_register_by_pointee_value_minus_one()
             .assign_value_to_selected_register("M", "0")
-            .set_label(&label_name);
+            .write_label(&label_name);
         self.label_count += 1;
     }
 
@@ -324,7 +324,23 @@ impl<'a> Writer<'a> {
                             "not" => self
                                 .convert_single_operand_instruction_to_hack_instruction_set("!M"),
                             "label" => {
-                                self.set_label(splitted_instruction.next().unwrap());
+                                self.write_label(splitted_instruction.next().unwrap());
+                            }
+                            "if-goto" => {
+                                let address = splitted_instruction.next().unwrap();
+                                self.load_and_decrement_stack_pointer()
+                                    .assign_value_to_selected_register("A", "M")
+                                    .assign_value_to_selected_register("D", "M")
+                                    .load_address_register(address)
+                                    .write_jump_instruction(None, Some("D"), "JNE");
+                            }
+                            "goto" => {
+                                let address = splitted_instruction.next().unwrap();
+                                self.load_address_register(address).write_jump_instruction(
+                                    None,
+                                    Some("0"),
+                                    "JMP",
+                                );
                             }
                             _ => unreachable!(),
                         };
@@ -356,7 +372,7 @@ impl std::error::Error for Error {}
 
 fn open_file(new_file_name: &str) -> Result<File, Error> {
     let mut path = PathBuf::from(new_file_name);
-    path.set_extension("hack");
+    path.set_extension("asm");
     OpenOptions::new()
         .write(true)
         .create(true)
