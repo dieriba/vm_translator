@@ -19,7 +19,7 @@ D=M
 @SP
 A=M-1
 D=M-D
-M=1
+M=-1
 @LABEL.0
 D;JEQ
 @SP

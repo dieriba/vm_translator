@@ -5,6 +5,7 @@ use std::{
     num::ParseIntError,
     path::{Path, PathBuf},
     str::SplitWhitespace,
+    sync::Mutex,
 };
 
 use crate::memory_segments::MEMORY_SEGMENTS;
@@ -36,6 +37,11 @@ impl<'a> Writer<'a> {
         }
     }
 
+    fn set_label(&mut self, label: &str) -> &mut Self {
+        let _ = writeln!(self.hack_instruction, "({})", label);
+        self
+    }
+
     fn load_address_register(&mut self, ram_address: &str) -> &mut Self {
         let _ = writeln!(self.hack_instruction, "@{}", ram_address);
         self
@@ -50,12 +56,28 @@ impl<'a> Writer<'a> {
         &mut self,
         selected_register: &str,
         value_to_assing: &str,
-    ) -> &Self {
+    ) -> &mut Self {
         let _ = writeln!(
             self.hack_instruction,
             "{}={}",
             selected_register, value_to_assing
         );
+        self
+    }
+
+    fn write_jump_instruction(
+        &mut self,
+        dest: Option<&str>,
+        value: Option<&str>,
+        instruction: &str,
+    ) -> &mut Self {
+        if let Some(dest) = dest {
+            let _ = write!(self.hack_instruction, "{}=", dest);
+        };
+        if let Some(value) = value {
+            let _ = write!(self.hack_instruction, "{}", value);
+        }
+        let _ = writeln!(self.hack_instruction, ";{}", instruction);
         self
     }
 
@@ -151,12 +173,18 @@ impl<'a> Writer<'a> {
 
     fn convert_compare_instruction_to_hack_instruction_set(&mut self, hack_instruction: &str) {
         let label_name = format!("LABEL.{}", self.label_count);
-        let parenthized_label = format!("({})", label_name);
-        let _ = writeln!(
-            self.hack_instruction,
-            "@SP\nM=M-1\nA=M\nD=M\n@SP\nA=M-1\nD=M-D\nM=-1\n@{}\nD;{}\n@SP\nA=M-1\nM=0\n{}",
-            label_name, hack_instruction, parenthized_label
-        );
+        self.load_and_decrement_stack_pointer()
+            .load_pointee_value_into_address_register_and_set_pointee_value_into_register_d()
+            .load_address_register("SP")
+            .decrement_address_register_by_pointee_value_minus_one()
+            .assign_value_to_selected_register("D", "M-D")
+            .assign_value_to_selected_register("M", "-1")
+            .load_address_register(&label_name)
+            .write_jump_instruction(None, Some("D"), hack_instruction)
+            .load_address_register("SP")
+            .decrement_address_register_by_pointee_value_minus_one()
+            .assign_value_to_selected_register("M", "0")
+            .set_label(&label_name);
         self.label_count += 1;
     }
 
@@ -177,20 +205,20 @@ impl<'a> Writer<'a> {
         match memory_segments {
             "local" | "argument" | "this" | "that" => {
                 let addr = MEMORY_SEGMENTS.get(memory_segments).unwrap();
-                self.load_address_register(offset);
-                self.assign_value_to_selected_register("D", "A");
-                self.load_address_register(addr);
-                self.assign_value_to_selected_register("A", "D+M");
-                self.assign_value_to_selected_register("D", "M");
+                self.load_address_register(offset)
+                    .assign_value_to_selected_register("D", "A")
+                    .load_address_register(addr)
+                    .assign_value_to_selected_register("A", "D+M")
+                    .assign_value_to_selected_register("D", "M");
                 remaning_instruction(self);
             }
             "temp" => {
                 let addr = MEMORY_SEGMENTS.get(memory_segments).unwrap();
-                self.load_address_register(offset);
-                self.assign_value_to_selected_register("D", "A");
-                self.load_address_register(addr);
-                self.assign_value_to_selected_register("A", "D+A");
-                self.assign_value_to_selected_register("D", "M");
+                self.load_address_register(offset)
+                    .assign_value_to_selected_register("D", "A")
+                    .load_address_register(addr)
+                    .assign_value_to_selected_register("A", "D+A")
+                    .assign_value_to_selected_register("D", "M");
                 remaning_instruction(self);
             }
             "constant" => {
@@ -199,17 +227,14 @@ impl<'a> Writer<'a> {
                 remaning_instruction(self);
             }
             "pointer" => {
-                if offset == "0" {
-                    self.load_address_register("THIS");
-                } else {
-                    self.load_address_register("THAT");
-                };
-                self.assign_value_to_selected_register("D", "M");
+                let instruction = if offset == "0" { "THIS" } else { "THAT" };
+                self.load_address_register(instruction)
+                    .assign_value_to_selected_register("D", "M");
                 remaning_instruction(self);
             }
             "static" => {
-                self.load_static_in_address_register(self.filename_without_extendion, offset);
-                self.assign_value_to_selected_register("D", "M");
+                self.load_static_in_address_register(self.filename_without_extendion, offset)
+                    .assign_value_to_selected_register("D", "M");
                 remaning_instruction(self);
             }
             _ => unreachable!(),
@@ -238,16 +263,16 @@ impl<'a> Writer<'a> {
             "local" | "argument" | "this" | "that" => {
                 let addr = MEMORY_SEGMENTS.get(memory_segments).unwrap();
                 self.load_address_register(addr)
-                    .assign_value_to_selected_register("D", "M");
-                self.load_address_register(ram_address)
+                    .assign_value_to_selected_register("D", "M")
+                    .load_address_register(ram_address)
                     .assign_value_to_selected_register("D", "D+A");
                 remaining_instruction(self);
             }
             "temp" => {
                 let addr = MEMORY_SEGMENTS.get(memory_segments).unwrap();
                 self.load_address_register(addr)
-                    .assign_value_to_selected_register("D", "A");
-                self.load_address_register(ram_address)
+                    .assign_value_to_selected_register("D", "A")
+                    .load_address_register(ram_address)
                     .assign_value_to_selected_register("D", "D+A");
                 remaining_instruction(self);
             }
