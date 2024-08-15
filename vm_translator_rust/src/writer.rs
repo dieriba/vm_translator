@@ -5,7 +5,6 @@ use std::{
     num::ParseIntError,
     path::{Path, PathBuf},
     str::SplitWhitespace,
-    sync::Mutex,
 };
 
 use crate::memory_segments::MEMORY_SEGMENTS;
@@ -298,6 +297,7 @@ impl<'a> Writer<'a> {
         loop {
             match self.reader.read_line(&mut line) {
                 Ok(0) => break,
+                Ok(_) if line.starts_with('/') => {}
                 Ok(_) => {
                     let mut splitted_instruction = line.split_whitespace();
                     if let Some(instruction) = splitted_instruction.next() {
@@ -323,14 +323,17 @@ impl<'a> Writer<'a> {
                                 .convert_single_operand_instruction_to_hack_instruction_set("-M"),
                             "not" => self
                                 .convert_single_operand_instruction_to_hack_instruction_set("!M"),
+                            "label" => {
+                                self.set_label(splitted_instruction.next().unwrap());
+                            }
                             _ => unreachable!(),
                         };
                         self.write_hack_instruction_to_file()?;
-                        line.clear();
                     }
                 }
                 Err(e) => return Err(Error::Io(e)),
             }
+            line.clear();
         }
 
         Ok(())

@@ -3,8 +3,9 @@ use std::io::{BufRead, BufReader};
 
 use crate::memory_segments::MEMORY_SEGMENTS;
 
-const INSTRUCTIONS: [&str; 11] = [
-    "push", "pop", "add", "sub", "eq", "lt", "gt", "and", "or", "not", "neg",
+const INSTRUCTIONS: [&str; 14] = [
+    "push", "pop", "add", "sub", "eq", "lt", "gt", "and", "or", "not", "neg", "if-goto", "goto",
+    "label",
 ];
 
 #[derive(Debug)]
@@ -29,10 +30,28 @@ pub fn parse_file(reader: &mut BufReader<File>) -> Result<(), Error> {
     loop {
         match reader.read_line(&mut line) {
             Ok(0) => break,
+            Ok(_) if line.starts_with('/') => {}
             Ok(_) => {
-                let mut splitted_instruction = line.split_whitespace();
+                let mut is_comment = false;
+                let mut splitted_instruction = line.split_whitespace().filter(|str| {
+                    if is_comment.eq(&true) {
+                        false
+                    } else if str.starts_with('/') {
+                        is_comment = true;
+                        false
+                    } else {
+                        true
+                    }
+                });
                 if let Some(instruction) = splitted_instruction.next() {
                     match instruction {
+                        "label" | "if-goto" => {
+                            if splitted_instruction.next().is_none() {
+                                return Err(Error::WrongSyntax {
+                                    expected: { format!("{} <destination>", instruction) },
+                                });
+                            }
+                        }
                         "push" | "pop" => {
                             if let Some(memory_segment) = splitted_instruction.next() {
                                 if memory_segment == "constant" && instruction == "pop" {
@@ -59,11 +78,11 @@ pub fn parse_file(reader: &mut BufReader<File>) -> Result<(), Error> {
                         }
                         _ => {}
                     }
-                    line.clear();
                 }
             }
             Err(e) => return Err(Error::Io(e)),
         }
+        line.clear();
     }
 
     Ok(())
