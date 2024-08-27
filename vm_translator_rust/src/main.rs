@@ -15,8 +15,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let file = std::fs::File::open(filename)?;
     let mut reader = BufReader::new(file);
-    parser::parse_file(&mut reader)?;
+    let num_of_call_instruction = parser::parse_file(&mut reader)?;
     reader.rewind()?;
-    writer::write_hack_instruction_from_jvm_instruction_into_file(reader, filename)?;
+    writer::write_hack_instruction_from_jvm_instruction_into_file(
+        num_of_call_instruction,
+        reader,
+        filename,
+    )?;
     Ok(())
 }

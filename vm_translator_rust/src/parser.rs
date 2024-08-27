@@ -3,9 +3,9 @@ use std::io::{BufRead, BufReader};
 
 use crate::memory_segments::MEMORY_SEGMENTS;
 
-const INSTRUCTIONS: [&str; 14] = [
+const INSTRUCTIONS: [&str; 17] = [
     "push", "pop", "add", "sub", "eq", "lt", "gt", "and", "or", "not", "neg", "if-goto", "goto",
-    "label",
+    "label", "call", "function", "return",
 ];
 
 #[derive(Debug)]
@@ -24,9 +24,9 @@ impl core::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-pub fn parse_file(reader: &mut BufReader<File>) -> Result<(), Error> {
+pub fn parse_file(reader: &mut BufReader<File>) -> Result<usize, Error> {
     let mut line = String::new();
-
+    let mut num_of_call_instruction: usize = 0;
     loop {
         match reader.read_line(&mut line) {
             Ok(0) => break,
@@ -69,13 +69,31 @@ pub fn parse_file(reader: &mut BufReader<File>) -> Result<(), Error> {
                                         expected: format!("{} <segments> <i>", instruction),
                                     });
                                 }
+                            } else {
+                                return Err(Error::WrongSyntax {
+                                    expected: format!("{} <segments> <i>", instruction),
+                                });
                             }
                         }
-                        instruction if !INSTRUCTIONS.contains(&instruction) => {
-                            return Err(Error::UnknownInstruction {
-                                instruction: instruction.to_string(),
-                            })
+                        "call" | "function" => {
+                            let function_name = splitted_instruction.next();
+                            let args = splitted_instruction.next();
+                            if function_name.is_none()
+                                || args.is_none()
+                                || args.unwrap().parse::<usize>().is_err()
+                            {
+                                return Err(Error::WrongSyntax {
+                                    expected: format!(
+                                        "{} <functionName> <i> where is must be a positive number",
+                                        instruction
+                                    ),
+                                });
+                            }
+                            if instruction == "call" {
+                                num_of_call_instruction += 1;
+                            }
                         }
+                        "return" => {}
                         _ => {}
                     }
                 }
@@ -85,7 +103,7 @@ pub fn parse_file(reader: &mut BufReader<File>) -> Result<(), Error> {
         line.clear();
     }
 
-    Ok(())
+    Ok(num_of_call_instruction)
 }
 
 #[cfg(test)]

@@ -1,9 +1,12 @@
+use core::num;
 use std::{
+    collections::HashMap,
     fmt::Write,
     fs::{File, OpenOptions},
     io::{BufRead, BufReader, BufWriter},
     num::ParseIntError,
     path::{Path, PathBuf},
+    rc::Rc,
     str::SplitWhitespace,
 };
 
@@ -17,22 +20,45 @@ pub enum Error {
     ParseIntError(ParseIntError),
 }
 
+struct FunctionFrame {
+    number_of_args: usize,
+    number_of_local_argument: Option<usize>,
+    return_address: String,
+}
+
+impl FunctionFrame {
+    fn new(number_of_args: usize, return_address: String) -> Self {
+        FunctionFrame {
+            number_of_args,
+            number_of_local_argument: None,
+            return_address,
+        }
+    }
+}
+
 struct Writer<'a> {
     hack_instruction: String,
     label_count: usize,
     writer: BufWriter<File>,
     reader: BufReader<File>,
     filename_without_extendion: &'a str,
+    function_frames: Vec<FunctionFrame>,
 }
 
 impl<'a> Writer<'a> {
-    fn new(reader: BufReader<File>, writer: BufWriter<File>, filename: &'a str) -> Self {
+    fn new(
+        reader: BufReader<File>,
+        writer: BufWriter<File>,
+        filename: &'a str,
+        num_of_call_instruction: usize,
+    ) -> Self {
         Self {
             hack_instruction: String::with_capacity(DEFAULT_CAPACITY),
             label_count: 0,
             writer,
             reader,
             filename_without_extendion: filename,
+            function_frames: Vec::with_capacity(num_of_call_instruction),
         }
     }
 
@@ -48,6 +74,25 @@ impl<'a> Writer<'a> {
 
     fn load_static_in_address_register(&mut self, filename: &str, nb: &str) -> &mut Self {
         let _ = writeln!(self.hack_instruction, "@{}.{}", filename, nb);
+        self
+    }
+
+    fn handle_function_call(&mut self, mut splitted_instruction: SplitWhitespace) -> &mut Self {
+        let return_address = format!(
+            "{}$ret.{}",
+            splitted_instruction.next().unwrap(),
+            self.function_frames.len()
+        );
+        let number_of_args = splitted_instruction
+            .next()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        self.function_frames.push(FunctionFrame {
+            number_of_args,
+            number_of_local_argument: None,
+            return_address,
+        });
         self
     }
 
@@ -342,6 +387,11 @@ impl<'a> Writer<'a> {
                                     "JMP",
                                 );
                             }
+                            "call" => {
+                                self.handle_function_call(splitted_instruction);
+                            }
+                            "function" => {}
+                            "return" => {}
                             _ => unreachable!(),
                         };
                         self.write_hack_instruction_to_file()?;
@@ -382,12 +432,18 @@ fn open_file(new_file_name: &str) -> Result<File, Error> {
 }
 
 pub fn write_hack_instruction_from_jvm_instruction_into_file(
+    num_of_call_instruction: usize,
     reader: BufReader<File>,
     filename: &str,
 ) -> Result<(), Error> {
     let new_file = open_file(filename)?;
     let filename_without_extension = Path::new(filename).file_stem().unwrap().to_str().unwrap();
-    let mut stack_write = Writer::new(reader, BufWriter::new(new_file), filename_without_extension);
+    let mut stack_write = Writer::new(
+        reader,
+        BufWriter::new(new_file),
+        filename_without_extension,
+        num_of_call_instruction,
+    );
     stack_write.execution()?;
     Ok(())
 }
