@@ -24,9 +24,8 @@ impl core::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-pub fn parse_file(reader: &mut BufReader<File>) -> Result<usize, Error> {
+pub fn parse_file(reader: &mut BufReader<File>) -> Result<(), Error> {
     let mut line = String::new();
-    let mut num_of_call_instruction: usize = 0;
     loop {
         match reader.read_line(&mut line) {
             Ok(0) => break,
@@ -89,9 +88,6 @@ pub fn parse_file(reader: &mut BufReader<File>) -> Result<usize, Error> {
                                     ),
                                 });
                             }
-                            if instruction == "call" {
-                                num_of_call_instruction += 1;
-                            }
                         }
                         "return" => {}
                         _ => {}
@@ -103,7 +99,7 @@ pub fn parse_file(reader: &mut BufReader<File>) -> Result<usize, Error> {
         line.clear();
     }
 
-    Ok(num_of_call_instruction)
+    Ok(())
 }
 
 #[cfg(test)]

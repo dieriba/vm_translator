@@ -1,4 +1,3 @@
-use core::num;
 use std::{
     collections::HashMap,
     fmt::Write,
@@ -6,7 +5,6 @@ use std::{
     io::{BufRead, BufReader, BufWriter},
     num::ParseIntError,
     path::{Path, PathBuf},
-    rc::Rc,
     str::SplitWhitespace,
 };
 
@@ -21,17 +19,15 @@ pub enum Error {
 }
 
 struct FunctionFrame {
-    number_of_args: usize,
-    number_of_local_argument: Option<usize>,
-    return_address: String,
+    number_of_args: String,
+    call: usize,
 }
 
 impl FunctionFrame {
-    fn new(number_of_args: usize, return_address: String) -> Self {
+    fn new(number_of_args: String) -> Self {
         FunctionFrame {
             number_of_args,
-            number_of_local_argument: None,
-            return_address,
+            call: 0,
         }
     }
 }
@@ -42,23 +38,23 @@ struct Writer<'a> {
     writer: BufWriter<File>,
     reader: BufReader<File>,
     filename_without_extendion: &'a str,
-    function_frames: Vec<FunctionFrame>,
+    function_frames: FunctionFrame,
+    current_function_executed: String,
 }
 
 impl<'a> Writer<'a> {
-    fn new(
-        reader: BufReader<File>,
-        writer: BufWriter<File>,
-        filename: &'a str,
-        num_of_call_instruction: usize,
-    ) -> Self {
+    fn new(reader: BufReader<File>, writer: BufWriter<File>, filename: &'a str) -> Self {
         Self {
             hack_instruction: String::with_capacity(DEFAULT_CAPACITY),
             label_count: 0,
             writer,
             reader,
             filename_without_extendion: filename,
-            function_frames: Vec::with_capacity(num_of_call_instruction),
+            function_frames: FunctionFrame {
+                number_of_args: String::new(),
+                call: 0,
+            },
+            current_function_executed: String::new(),
         }
     }
 
@@ -77,23 +73,98 @@ impl<'a> Writer<'a> {
         self
     }
 
-    fn handle_function_call(&mut self, mut splitted_instruction: SplitWhitespace) -> &mut Self {
+    //check handle_return_instruction if you were to modify that function
+    fn handle_call_instruction(&mut self, mut splitted_instruction: SplitWhitespace) {
+        let function_name = splitted_instruction.next().unwrap();
         let return_address = format!(
             "{}$ret.{}",
-            splitted_instruction.next().unwrap(),
-            self.function_frames.len()
+            self.current_function_executed, self.function_frames.call
         );
         let number_of_args = splitted_instruction
             .next()
             .unwrap()
             .parse::<usize>()
-            .unwrap();
-        self.function_frames.push(FunctionFrame {
-            number_of_args,
-            number_of_local_argument: None,
-            return_address,
-        });
-        self
+            .unwrap()
+            + 5;
+        self.write_label(&return_address)
+            .push_memory_segment_onto_stack("constant", &return_address)
+            .push_memory_segment_onto_stack("argument", "0")
+            .push_memory_segment_onto_stack("local", "0")
+            .push_memory_segment_onto_stack("this", "0")
+            .push_memory_segment_onto_stack("that", "0")
+            .load_address_register(&number_of_args.to_string())
+            .assign_value_to_selected_register("D", "A")
+            .load_address_register("SP")
+            .assign_value_to_selected_register("D", "M-D")
+            .load_address_register("ARG")
+            .assign_value_to_selected_register("M", "D")
+            .jump_to_address(function_name);
+        self.function_frames.call += 1;
+    }
+
+    fn handle_function_instruction(&mut self, mut splitted_instruction: SplitWhitespace) {
+        let function_name = splitted_instruction.next().unwrap();
+        let number_of_local_variables = splitted_instruction.next().unwrap();
+        let loop_label = format!("LOOP_{}", function_name);
+        let end_loop_label = format!("END_LOOP_{}", function_name);
+        let i = "i";
+        self.load_address_register("SP")
+            .assign_value_to_selected_register("D", "M")
+            .load_address_register("LCL")
+            .assign_value_to_selected_register("M", "D")
+            .load_address_register(number_of_local_variables)
+            .assign_value_to_selected_register("D", "A")
+            .load_address_register(&end_loop_label)
+            .write_jump_instruction(None, Some("D"), "JEQ")
+            .load_address_register(i)
+            .assign_value_to_selected_register("M", "D")
+            .write_label(&loop_label)
+            .load_address_register("SP")
+            .assign_value_to_selected_register("A", "M")
+            .assign_value_to_selected_register("M", "0")
+            .load_and_increment_stack_pointer()
+            .load_and_decrement_register_by_one(i)
+            .assign_value_to_selected_register("D", "M")
+            .load_address_register(&loop_label)
+            .write_jump_instruction(None, Some("D"), "JGT")
+            .write_label(&end_loop_label);
+
+        if self.current_function_executed != function_name {
+            self.function_frames.call = 0;
+        }
+
+        self.current_function_executed = function_name.to_string();
+    }
+
+    fn restore_pointer(&mut self, memory_segments: &str) -> &mut Self {
+        self.load_address_register("LCL")
+            .assign_value_to_selected_register("DM", "M-1")
+            .load_address_register(memory_segments)
+            .assign_value_to_selected_register("M", "D")
+    }
+
+    fn handle_return_instruction(&mut self) {
+        let return_address = "return_address";
+        self.load_address_register("LCL")
+            .assign_value_to_selected_register("D", "M")
+            .load_address_register("5") //5 because 5 value were push onto the stack before the LCL pointer, and return addres is located at the top
+            .assign_value_to_selected_register("A", "D-A")
+            .assign_value_to_selected_register("D", "M")
+            .load_address_register(return_address)
+            .assign_value_to_selected_register("M", "D")
+            .load_address_register("SP")
+            .assign_value_to_selected_register("A", "M-1")
+            .assign_value_to_selected_register("D", "M")
+            .load_address_register("ARG")
+            .assign_value_to_selected_register("M", "D")
+            .assign_value_to_selected_register("D", "A")
+            .load_address_register("SP")
+            .assign_value_to_selected_register("M", "D+1")
+            .restore_pointer("THAT")
+            .restore_pointer("THIS")
+            .restore_pointer("LCL")
+            .restore_pointer("ARG")
+            .jump_to_address(return_address);
     }
 
     fn assign_value_to_selected_register(
@@ -150,6 +221,12 @@ impl<'a> Writer<'a> {
         self
     }
 
+    fn load_and_decrement_register_by_one(&mut self, address: &str) -> &mut Self {
+        self.load_address_register(address)
+            .assign_value_to_selected_register("M", "M-1");
+        self
+    }
+
     fn load_pointee_value_into_address_register_and_set_pointee_value_into_register_d(
         &mut self,
     ) -> &mut Self {
@@ -178,21 +255,16 @@ impl<'a> Writer<'a> {
         self
     }
 
-    fn decrement_selected_register(&mut self) -> &mut Self {
-        self.assign_value_to_selected_register("M", "M-1");
-        self
-    }
-
-    fn increment_selected_register(&mut self) -> &mut Self {
-        self.assign_value_to_selected_register("M", "M+1");
-        self
-    }
-
     fn write_hack_instruction_to_file(&mut self) -> Result<(), Error> {
         std::io::Write::write_all(&mut self.writer, self.hack_instruction.as_bytes())
             .map_err(Error::Io)?;
         self.hack_instruction.clear();
         Ok(())
+    }
+
+    fn jump_to_address(&mut self, address: &str) -> &mut Self {
+        self.load_address_register(address)
+            .write_jump_instruction(None, Some("0"), "JMP")
     }
 
     fn convert_single_operand_instruction_to_hack_instruction_set(
@@ -232,13 +304,7 @@ impl<'a> Writer<'a> {
         self.label_count += 1;
     }
 
-    fn convert_push_instruction_to_hack_instruction_set(
-        &mut self,
-        mut instruction_arguments: SplitWhitespace,
-    ) {
-        let memory_segments = instruction_arguments.next().unwrap();
-        let offset = instruction_arguments.next().unwrap();
-
+    fn push_memory_segment_onto_stack(&mut self, memory_segments: &str, offset: &str) -> &mut Self {
         let remaning_instruction = |writer: &mut Self| {
             writer
                 .load_address_register("SP")
@@ -283,12 +349,10 @@ impl<'a> Writer<'a> {
             }
             _ => unreachable!(),
         };
+        self
     }
 
-    fn convert_pop_instruction_to_hack_instruction_set(
-        &mut self,
-        mut instruction_arguments: SplitWhitespace,
-    ) {
+    fn pop_off_memory_segment_of_stack(&mut self, mut instruction_arguments: SplitWhitespace) {
         let memory_segments = instruction_arguments.next().unwrap();
         let ram_address = instruction_arguments.next().unwrap();
 
@@ -347,12 +411,13 @@ impl<'a> Writer<'a> {
                     let mut splitted_instruction = line.split_whitespace();
                     if let Some(instruction) = splitted_instruction.next() {
                         match instruction {
-                            "push" => self.convert_push_instruction_to_hack_instruction_set(
-                                splitted_instruction,
-                            ),
-                            "pop" => self.convert_pop_instruction_to_hack_instruction_set(
-                                splitted_instruction,
-                            ),
+                            "push" => {
+                                self.push_memory_segment_onto_stack(
+                                    splitted_instruction.next().unwrap(),
+                                    splitted_instruction.next().unwrap(),
+                                );
+                            }
+                            "pop" => self.pop_off_memory_segment_of_stack(splitted_instruction),
                             "add" => self
                                 .convert_double_operand_instruction_to_hack_instruction_set("D+M"),
                             "sub" => self
@@ -380,18 +445,11 @@ impl<'a> Writer<'a> {
                                     .write_jump_instruction(None, Some("D"), "JNE");
                             }
                             "goto" => {
-                                let address = splitted_instruction.next().unwrap();
-                                self.load_address_register(address).write_jump_instruction(
-                                    None,
-                                    Some("0"),
-                                    "JMP",
-                                );
+                                self.jump_to_address(splitted_instruction.next().unwrap());
                             }
-                            "call" => {
-                                self.handle_function_call(splitted_instruction);
-                            }
-                            "function" => {}
-                            "return" => {}
+                            "call" => self.handle_call_instruction(splitted_instruction),
+                            "function" => self.handle_function_instruction(splitted_instruction),
+                            "return" => self.handle_return_instruction(),
                             _ => unreachable!(),
                         };
                         self.write_hack_instruction_to_file()?;
@@ -432,18 +490,12 @@ fn open_file(new_file_name: &str) -> Result<File, Error> {
 }
 
 pub fn write_hack_instruction_from_jvm_instruction_into_file(
-    num_of_call_instruction: usize,
     reader: BufReader<File>,
     filename: &str,
 ) -> Result<(), Error> {
     let new_file = open_file(filename)?;
     let filename_without_extension = Path::new(filename).file_stem().unwrap().to_str().unwrap();
-    let mut stack_write = Writer::new(
-        reader,
-        BufWriter::new(new_file),
-        filename_without_extension,
-        num_of_call_instruction,
-    );
+    let mut stack_write = Writer::new(reader, BufWriter::new(new_file), filename_without_extension);
     stack_write.execution()?;
     Ok(())
 }
